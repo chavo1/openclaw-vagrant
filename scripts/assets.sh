@@ -74,6 +74,13 @@ clean_package_cache() {
     rm -rf /var/lib/apt/lists/*
 }
 
+# Fix any broken package installations
+fix_broken_packages() {
+    log_info "Fixing broken packages..."
+    dpkg --configure -a 2>/dev/null || true
+    apt-get install -f -y 2>/dev/null || true
+}
+
 ################################################################################
 # Main Setup Steps
 ################################################################################
@@ -83,6 +90,9 @@ print_header "OpenClaw VM - Environment Setup (Openbox)"
 # 0. Initial cleanup
 log_step "[0/8] Preparing system..."
 clean_package_cache
+
+# Fix any existing package issues
+fix_broken_packages
 
 # 1. System update - ALWAYS update to latest
 log_step "[1/8] Updating system packages to latest versions..."
@@ -122,15 +132,15 @@ apt-get install -y \
 
 log_info "✓ Openbox desktop environment installed"
 
-# 3. VirtualBox Guest Additions - ALWAYS try to get latest
-log_step "[3/8] Installing VirtualBox Guest Additions..."
-if apt-get install -y virtualbox-guest-utils virtualbox-guest-x11 2>/dev/null; then
-    log_info "✓ VirtualBox Guest Additions installed"
-else
-    log_warn "VirtualBox Guest Additions not available (not running in VirtualBox?)"
-fi
+# 3. VirtualBox Guest Additions - Skip to avoid conflicts
+log_step "[3/8] Configuring VirtualBox Guest Additions..."
+log_warn "Skipping automatic VirtualBox Guest Additions installation"
+log_warn "This avoids package conflicts. Install manually if needed:"
+log_warn "  1. Insert Guest Additions CD from VirtualBox menu"
+log_warn "  2. Run: sudo sh /media/cdrom/VBoxLinuxAdditions.run"
+log_info "Continuing with installation..."
 
-# 4. Common desktop applications - ALWAYS update
+# 4. Common desktop applications - ALWAYS update (VLC installed separately)
 log_step "[4/8] Installing common applications..."
 log_info "Installing utilities and applications..."
 
@@ -148,7 +158,6 @@ apt-get install -y \
     software-properties-common \
     apt-transport-https \
     libreoffice \
-    vlc \
     thunar-archive-plugin \
     xarchiver \
     p7zip-full \
@@ -159,6 +168,24 @@ apt-get install -y \
     gnome-system-monitor
 
 log_info "✓ Common applications installed"
+
+# Install VLC separately with extra error handling
+log_info "Installing VLC media player..."
+if apt-get install -y vlc 2>&1 | tee /tmp/vlc-install.log; then
+    log_info "✓ VLC installed successfully"
+else
+    log_warn "VLC installation encountered issues, attempting to fix..."
+    fix_broken_packages
+    if apt-get install -y vlc 2>/dev/null; then
+        log_info "✓ VLC installed after fixes"
+    else
+        log_warn "Could not install VLC, continuing anyway..."
+        # Remove any partially installed VLC packages
+        apt-get remove -y vlc vlc-* 2>/dev/null || true
+        fix_broken_packages
+    fi
+fi
+rm -f /tmp/vlc-install.log
 
 # 5. Google Chrome - ALWAYS download latest version
 log_step "[5/8] Installing Google Chrome (latest version)..."
@@ -428,7 +455,7 @@ Version=1.0
 Type=Application
 Name=Gateway Control
 Comment=Start/Stop/Restart OpenClaw Gateway service
-Exec=xfce4-terminal --title="OpenClaw Gateway Control" --command="bash -c 'echo \"========================================\"; echo \" OpenClaw Gateway Control\"; echo \"========================================\"; echo \"\"; echo \"1) Start gateway\"; echo \"2) Stop gateway\"; echo \"3) Restart gateway\"; echo \"4) Check status\"; echo \"5) View logs\"; echo \"\"; read -p \"Choose option (1-5): \" opt; case $opt in 1) sudo systemctl start openclaw-gateway && echo \"Gateway started\";; 2) sudo systemctl stop openclaw-gateway && echo \"Gateway stopped\";; 3) sudo systemctl restart openclaw-gateway && echo \"Gateway restarted\";; 4) sudo systemctl status openclaw-gateway;; 5) sudo journalctl -u openclaw-gateway -f;; *) echo \"Invalid option\";; esac; echo \"\"; read -p \"Press Enter to close...\"'"
+Exec=xfce4-terminal --title="OpenClaw Gateway Control" --command="bash -c 'echo \"========================================\"; echo \" OpenClaw Gateway Control\"; echo \"========================================\"; echo \"\"; echo \"1) Start gateway\"; echo \"2) Stop gateway\"; echo \"3) Restart gateway\"; echo \"4) Check status\"; echo \"5) View logs\"; echo \"\"; read -p \"Choose option (1-5): \" opt; case \$opt in 1) sudo systemctl start openclaw-gateway && echo \"Gateway started\";; 2) sudo systemctl stop openclaw-gateway && echo \"Gateway stopped\";; 3) sudo systemctl restart openclaw-gateway && echo \"Gateway restarted\";; 4) sudo systemctl status openclaw-gateway;; 5) sudo journalctl -u openclaw-gateway -f;; *) echo \"Invalid option\";; esac; echo \"\"; read -p \"Press Enter to close...\"'"
 Icon=system-run
 Terminal=false
 Categories=System;
@@ -450,6 +477,21 @@ Categories=System;
 StartupNotify=true
 LAUNCHER
 chmod +x "${OPENCLAW_HOME}/Desktop/openclaw-update.desktop"
+
+# VirtualBox Guest Additions manual install helper
+cat > "${OPENCLAW_HOME}/Desktop/install-vbox-additions.desktop" <<'LAUNCHER'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Install VBox Additions
+Comment=Manually install VirtualBox Guest Additions
+Exec=xfce4-terminal --title="VirtualBox Guest Additions Installer" --command="bash -c 'echo \"========================================\"; echo \" VirtualBox Guest Additions Installer\"; echo \"========================================\"; echo \"\"; echo \"INSTRUCTIONS:\"; echo \"1. In VirtualBox menu: Devices > Insert Guest Additions CD\"; echo \"2. Wait for CD to mount\"; echo \"3. Press Enter to continue...\"; read; echo \"\"; if [ -f /media/cdrom/VBoxLinuxAdditions.run ]; then sudo sh /media/cdrom/VBoxLinuxAdditions.run; echo \"\"; echo \"Installation complete!\"; else echo \"ERROR: Guest Additions CD not found\"; echo \"Please insert it from VirtualBox menu first\"; fi; echo \"\"; read -p \"Press Enter to close...\"'"
+Icon=system-software-install
+Terminal=false
+Categories=System;
+StartupNotify=true
+LAUNCHER
+chmod +x "${OPENCLAW_HOME}/Desktop/install-vbox-additions.desktop"
 
 # README file
 cat > "${OPENCLAW_HOME}/Desktop/README.txt" <<'README'
@@ -484,6 +526,10 @@ OpenClaw (https://openclaw.ai), the open-source AI agent framework.
    → Double-click "Update OpenClaw" to get the latest version
    → Or run: sudo npm install -g openclaw@latest
 
+6. **Install VirtualBox Guest Additions (Optional)**
+   → Double-click "Install VBox Additions" for better integration
+   → Enables: shared folders, better graphics, seamless mouse
+
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ DESKTOP ENVIRONMENT                                                         │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -492,7 +538,6 @@ This VM uses Openbox, a lightweight window manager:
   • Right-click anywhere on desktop to open the application menu
   • Desktop icons are managed by PCManFM
   • Panel (tint2) shows taskbar, clock, and system tray
-  • If icons aren't clickable, run: bash ~/Desktop/fix-desktop-files.sh
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ USEFUL COMMANDS                                                             │
@@ -528,7 +573,7 @@ Installed Software:
   • OpenClaw (latest)
   • Google Chrome
   • LibreOffice
-  • VLC Media Player
+  • VLC Media Player (if successfully installed)
   • Various utilities
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -547,9 +592,12 @@ Can't access dashboard:
 
 Desktop icons not working:
   • Check file permissions: ls -la ~/Desktop/
-  • Run fix script: bash ~/Desktop/fix-desktop-files.sh
-  • Or manually: chmod +x ~/Desktop/*.desktop
+  • Manually fix: chmod +x ~/Desktop/*.desktop
   • Restart desktop: pkill pcmanfm && pcmanfm --desktop &
+
+VirtualBox Guest Additions:
+  • Use the "Install VBox Additions" desktop launcher
+  • Or manually: Insert CD, run: sudo sh /media/cdrom/VBoxLinuxAdditions.run
 
 Need help:
   • Visit: https://openclaw.ai
@@ -586,8 +634,9 @@ systemctl enable lightdm
 
 log_info "✓ Desktop environment configured"
 
-# Final cleanup
+# Final cleanup and ensure no broken packages remain
 log_info "Performing final cleanup..."
+fix_broken_packages
 apt-get autoremove -y
 apt-get autoclean -y
 clean_package_cache
@@ -607,6 +656,7 @@ echo "  • npm:             ${NPM_INSTALLED_VERSION}"
 echo "  • pnpm:            ${PNPM_VERSION}"
 echo "  • OpenClaw:        ${OPENCLAW_VERSION}"
 echo "  • Chrome:          $(google-chrome-stable --version 2>/dev/null || echo 'Installed')"
+echo "  • VBox Additions:  Manual installation available (see desktop launcher)"
 echo ""
 log_info "The VM will start in graphical mode on next boot."
 log_info "Auto-login is configured for user: ${OPENCLAW_USER}"
@@ -617,6 +667,7 @@ echo "  • OpenClaw Dashboard     - Web interface"
 echo "  • OpenClaw TUI           - Terminal interface"
 echo "  • Gateway Control        - Service management"
 echo "  • Update OpenClaw        - Get latest version"
+echo "  • Install VBox Additions - Optional VirtualBox integration"
 echo "  • README.txt             - Detailed documentation"
 echo ""
 log_info "Gateway service: ${OPENCLAW_USER} can start with 'sudo systemctl start openclaw-gateway'"
